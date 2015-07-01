@@ -603,6 +603,13 @@ class X86_64Assembler FINAL : public Assembler {
   void bswapq(CpuRegister dst);
 
   void repne_scasw();
+<<<<<<< HEAD
+=======
+  void repe_cmpsw();
+  void repe_cmpsl();
+  void repe_cmpsq();
+  void rep_movsw();
+>>>>>>> b9c4bbe... Add rep movsw to x86 and x86_64 instructions.
 
   //
   // Macros for High-level operations.
@@ -781,7 +788,6 @@ class X86_64Assembler FINAL : public Assembler {
   void EmitComplex(uint8_t rm, const Operand& operand, const Immediate& immediate);
   void EmitLabel(Label* label, int instruction_size);
   void EmitLabelLink(Label* label);
-  void EmitNearLabelLink(Label* label);
 
   void EmitGenericShift(bool wide, int rm, CpuRegister reg, const Immediate& imm);
   void EmitGenericShift(bool wide, int rm, CpuRegister operand, CpuRegister shifter);

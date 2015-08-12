@@ -435,6 +435,8 @@ void PatchOat::PatchArtMethods(const ImageHeader* image_header) {
     auto* dest = RelocatedCopyOf(src);
     FixupMethod(src, dest);
   }
+  PatchOatArtMethodVisitor visitor(this);
+  section.VisitPackedArtMethods(&visitor, heap_->Begin(), pointer_size);
 }
 
 class FixupRootVisitor : public RootVisitor {

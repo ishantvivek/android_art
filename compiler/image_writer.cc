@@ -244,8 +244,8 @@ void ImageWriter::AssignImageOffset(mirror::Object* object, ImageWriter::BinSlot
   DCHECK(object != nullptr);
   DCHECK_NE(image_objects_offset_begin_, 0u);
 
-  size_t previous_bin_sizes = bin_slot_previous_sizes_[bin_slot.GetBin()];
-  size_t new_offset = image_objects_offset_begin_ + previous_bin_sizes + bin_slot.GetIndex();
+  size_t bin_slot_offset = bin_slot_offsets_[bin_slot.GetBin()];
+  size_t new_offset = bin_slot_offset + bin_slot.GetIndex();
   DCHECK_ALIGNED(new_offset, kObjectAlignment);
 
   SetImageOffset(object, new_offset);
@@ -850,6 +850,31 @@ void ImageWriter::WalkFieldsInOrder(mirror::Object* obj) {
         }
         for (auto& m : array) {
           AssignMethodOffset(&m, any_dirty ? kBinArtMethodDirty : kBinArtMethodClean);
+        const size_t method_alignment = ArtMethod::ObjectAlignment(target_ptr_size_);
+        const size_t method_size = ArtMethod::ObjectSize(target_ptr_size_);
+        auto iteration_range =
+            MakeIterationRangeFromLengthPrefixedArray(array, method_size, method_alignment);
+        for (auto& m : iteration_range) {
+          any_dirty = any_dirty || WillMethodBeDirty(&m);
+          ++count;
+        }
+        NativeObjectRelocationType type = any_dirty ? kNativeObjectRelocationTypeArtMethodDirty :
+            kNativeObjectRelocationTypeArtMethodClean;
+        Bin bin_type = BinTypeForNativeRelocationType(type);
+        // Forward the entire array at once, but header first.
+        const size_t header_size = LengthPrefixedArray<ArtMethod>::ComputeSize(0,
+                                                                               method_size,
+                                                                               method_alignment);
+        auto it = native_object_relocations_.find(array);
+        CHECK(it == native_object_relocations_.end()) << "Method array " << array
+            << " already forwarded";
+        size_t& offset = bin_slot_sizes_[bin_type];
+        native_object_relocations_.emplace(array, NativeObjectRelocation { offset,
+            any_dirty ? kNativeObjectRelocationTypeArtMethodArrayDirty :
+                kNativeObjectRelocationTypeArtMethodArrayClean });
+        offset += header_size;
+        for (auto& m : iteration_range) {
+          AssignMethodOffset(&m, type);
         }
         (any_dirty ? dirty_methods_ : clean_methods_) += count;
       }
@@ -926,19 +951,40 @@ void ImageWriter::CalculateNewObjectOffsets() {
       runtime->GetCalleeSaveMethod(Runtime::kRefsOnly);
   image_methods_[ImageHeader::kRefsAndArgsSaveMethod] =
       runtime->GetCalleeSaveMethod(Runtime::kRefsAndArgs);
+
+  // Add room for fake length prefixed array.
+  const auto image_method_type = kNativeObjectRelocationTypeArtMethodArrayClean;
+  auto it = native_object_relocations_.find(&image_method_array_);
+  CHECK(it == native_object_relocations_.end());
+  size_t& offset = bin_slot_sizes_[BinTypeForNativeRelocationType(image_method_type)];
+  native_object_relocations_.emplace(&image_method_array_,
+                                     NativeObjectRelocation { offset, image_method_type });
+  size_t method_alignment = ArtMethod::ObjectAlignment(target_ptr_size_);
+  const size_t array_size = LengthPrefixedArray<ArtMethod>::ComputeSize(
+      0, ArtMethod::ObjectSize(target_ptr_size_), method_alignment);
+  CHECK_ALIGNED_PARAM(array_size, method_alignment);
+  offset += array_size;
   for (auto* m : image_methods_) {
     CHECK(m != nullptr);
     CHECK(m->IsRuntimeMethod());
     AssignMethodOffset(m, kBinArtMethodDirty);
   }
 
-  // Calculate cumulative bin slot sizes.
-  size_t previous_sizes = 0u;
+  // Calculate bin slot offsets.
+  size_t bin_offset = image_objects_offset_begin_;
   for (size_t i = 0; i != kBinSize; ++i) {
-    bin_slot_previous_sizes_[i] = previous_sizes;
-    previous_sizes += bin_slot_sizes_[i];
+    bin_slot_offsets_[i] = bin_offset;
+    bin_offset += bin_slot_sizes_[i];
+    if (i == kBinArtField) {
+      static_assert(kBinArtField + 1 == kBinArtMethodClean, "Methods follow fields.");
+      static_assert(alignof(ArtField) == 4u, "ArtField alignment is 4.");
+      DCHECK_ALIGNED(bin_offset, 4u);
+      DCHECK(method_alignment == 4u || method_alignment == 8u);
+      bin_offset = RoundUp(bin_offset, method_alignment);
+    }
   }
-  DCHECK_EQ(previous_sizes, GetBinSizeSum());
+  // NOTE: There may be additional padding between the bin slots and the intern table.
+
   DCHECK_EQ(image_end_, GetBinSizeSum(kBinMirrorCount) + image_objects_offset_begin_);
 
   // Transform each object's bin slot into an offset which will be used to do the final copy.
@@ -953,6 +999,10 @@ void ImageWriter::CalculateNewObjectOffsets() {
     auto& native_reloc = pair.second;
     native_reloc.offset += image_objects_offset_begin_ +
         bin_slot_previous_sizes_[native_reloc.bin_type];
+  for (auto& pair : native_object_relocations_) {
+    NativeObjectRelocation& relocation = pair.second;
+    Bin bin_type = BinTypeForNativeRelocationType(relocation.type);
+    relocation.offset += bin_slot_offsets_[bin_type];
   }
 
   // Calculate how big the intern table will be after being serialized.
@@ -979,15 +1029,15 @@ void ImageWriter::CreateHeader(size_t oat_loaded_size, size_t oat_data_offset) {
   // Add field section.
   auto* field_section = &sections[ImageHeader::kSectionArtFields];
   *field_section = ImageSection(cur_pos, bin_slot_sizes_[kBinArtField]);
-  CHECK_EQ(image_objects_offset_begin_ + bin_slot_previous_sizes_[kBinArtField],
-           field_section->Offset());
+  CHECK_EQ(bin_slot_offsets_[kBinArtField], field_section->Offset());
   cur_pos = field_section->End();
+  // Round up to the alignment the required by the method section.
+  cur_pos = RoundUp(cur_pos, ArtMethod::ObjectAlignment(target_ptr_size_));
   // Add method section.
   auto* methods_section = &sections[ImageHeader::kSectionArtMethods];
   *methods_section = ImageSection(cur_pos, bin_slot_sizes_[kBinArtMethodClean] +
                                   bin_slot_sizes_[kBinArtMethodDirty]);
-  CHECK_EQ(image_objects_offset_begin_ + bin_slot_previous_sizes_[kBinArtMethodClean],
-           methods_section->Offset());
+  CHECK_EQ(bin_slot_offsets_[kBinArtMethodClean], methods_section->Offset());
   cur_pos = methods_section->End();
   // Calculate the size of the interned strings.
   auto* interned_strings_section = &sections[ImageHeader::kSectionInternedStrings];
@@ -1072,6 +1122,37 @@ void ImageWriter::CopyAndFixupNativeData() {
       DCHECK_GE(dest, image_->Begin() + image_end_);
       CopyAndFixupMethod(reinterpret_cast<ArtMethod*>(pair.first),
                          reinterpret_cast<ArtMethod*>(dest));
+  for (auto& pair : native_object_relocations_) {
+    NativeObjectRelocation& relocation = pair.second;
+    auto* dest = image_->Begin() + relocation.offset;
+    DCHECK_GE(dest, image_->Begin() + image_end_);
+    switch (relocation.type) {
+      case kNativeObjectRelocationTypeArtField: {
+        memcpy(dest, pair.first, sizeof(ArtField));
+        reinterpret_cast<ArtField*>(dest)->SetDeclaringClass(
+            GetImageAddress(reinterpret_cast<ArtField*>(pair.first)->GetDeclaringClass()));
+        break;
+      }
+      case kNativeObjectRelocationTypeArtMethodClean:
+      case kNativeObjectRelocationTypeArtMethodDirty: {
+        CopyAndFixupMethod(reinterpret_cast<ArtMethod*>(pair.first),
+                           reinterpret_cast<ArtMethod*>(dest));
+        break;
+      }
+      // For arrays, copy just the header since the elements will get copied by their corresponding
+      // relocations.
+      case kNativeObjectRelocationTypeArtFieldArray: {
+        memcpy(dest, pair.first, LengthPrefixedArray<ArtField>::ComputeSize(0));
+        break;
+      }
+      case kNativeObjectRelocationTypeArtMethodArrayClean:
+      case kNativeObjectRelocationTypeArtMethodArrayDirty: {
+        memcpy(dest, pair.first, LengthPrefixedArray<ArtMethod>::ComputeSize(
+            0,
+            ArtMethod::ObjectSize(target_ptr_size_),
+            ArtMethod::ObjectAlignment(target_ptr_size_)));
+        break;
+      }
     }
   }
   // Fixup the image method roots.

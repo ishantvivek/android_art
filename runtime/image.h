@@ -46,6 +46,11 @@ class PACKED(4) ImageSection {
   bool Contains(uint64_t offset) const {
     return offset - offset_ < size_;
   }
+  // Visit ArtMethods in the section starting at base.
+  void VisitPackedArtMethods(ArtMethodVisitor* visitor, uint8_t* base, size_t pointer_size) const;
+
+  // Visit ArtMethods in the section starting at base.
+  void VisitPackedArtFields(ArtFieldVisitor* visitor, uint8_t* base) const;
 
  private:
   uint32_t offset_;

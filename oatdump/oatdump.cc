@@ -1538,6 +1538,8 @@ class ImageDumper {
             DumpMethod(method, this, indent_os);
             indent_os << "\n";
           }
+          DumpArtMethodVisitor visitor(this);
+          methods_section.VisitPackedArtMethods(&visitor, image_space->Begin(), pointer_size);
         }
       }
       // Dump the large objects separately.
@@ -1560,8 +1562,15 @@ class ImageDumper {
     const auto& intern_section = image_header_.GetImageSection(
         ImageHeader::kSectionInternedStrings);
     stats_.header_bytes = header_bytes;
-    size_t alignment_bytes = RoundUp(header_bytes, kObjectAlignment) - header_bytes;
-    stats_.alignment_bytes += alignment_bytes;
+    stats_.alignment_bytes += RoundUp(header_bytes, kObjectAlignment) - header_bytes;
+    // Add padding between the field and method section.
+    // (Field section is 4-byte aligned, method section is 8-byte aligned on 64-bit targets.)
+    stats_.alignment_bytes +=
+        method_section.Offset() - (field_section.Offset() + field_section.Size());
+    // Add padding between the method section and the intern table.
+    // (Method section is 4-byte aligned on 32-bit targets, intern table is 8-byte aligned.)
+    stats_.alignment_bytes +=
+        intern_section.Offset() - (method_section.Offset() + method_section.Size());
     stats_.alignment_bytes += bitmap_section.Offset() - image_header_.GetImageSize();
     stats_.bitmap_bytes += bitmap_section.Size();
     stats_.art_field_bytes += field_section.Size();

@@ -25,6 +25,7 @@ namespace art {
 
 const uint8_t ImageHeader::kImageMagic[] = { 'a', 'r', 't', '\n' };
 const uint8_t ImageHeader::kImageVersion[] = { '0', '1', '7', '\0' };
+const uint8_t ImageHeader::kImageVersion[] = { '0', '1', '9', '\0' };
 
 ImageHeader::ImageHeader(uint32_t image_begin,
                          uint32_t image_size,
@@ -145,6 +146,30 @@ const ImageSection& ImageHeader::GetImageSection(ImageSections index) const {
 
 std::ostream& operator<<(std::ostream& os, const ImageSection& section) {
   return os << "size=" << section.Size() << " range=" << section.Offset() << "-" << section.End();
+}
+
+void ImageSection::VisitPackedArtFields(ArtFieldVisitor* visitor, uint8_t* base) const {
+  for (size_t pos = 0; pos < Size(); ) {
+    auto* array = reinterpret_cast<LengthPrefixedArray<ArtField>*>(base + Offset() + pos);
+    for (size_t i = 0; i < array->Length(); ++i) {
+      visitor->Visit(&array->At(i, sizeof(ArtField)));
+    }
+    pos += array->ComputeSize(array->Length());
+  }
+}
+
+void ImageSection::VisitPackedArtMethods(ArtMethodVisitor* visitor,
+                                         uint8_t* base,
+                                         size_t pointer_size) const {
+  const size_t method_alignment = ArtMethod::ObjectAlignment(pointer_size);
+  const size_t method_size = ArtMethod::ObjectSize(pointer_size);
+  for (size_t pos = 0; pos < Size(); ) {
+    auto* array = reinterpret_cast<LengthPrefixedArray<ArtMethod>*>(base + Offset() + pos);
+    for (size_t i = 0; i < array->Length(); ++i) {
+      visitor->Visit(&array->At(i, method_size, method_alignment));
+    }
+    pos += array->ComputeSize(array->Length(), method_size, method_alignment);
+  }
 }
 
 }  // namespace art

@@ -91,8 +91,8 @@ inline ArtMethod* Class::GetDirectMethodUnchecked(size_t i, size_t pointer_size)
   return reinterpret_cast<ArtMethod*>(reinterpret_cast<uintptr_t>(methods) +
       ArtMethod::ObjectSize(pointer_size) * i);
   return &methods->At(i,
-                      ArtMethod::ObjectSize(pointer_size),
-                      ArtMethod::ObjectAlignment(pointer_size));
+                      ArtMethod::Size(pointer_size),
+                      ArtMethod::Alignment(pointer_size));
 }
 
 inline ArtMethod* Class::GetDirectMethod(size_t i, size_t pointer_size) {
@@ -102,8 +102,8 @@ inline ArtMethod* Class::GetDirectMethod(size_t i, size_t pointer_size) {
   return reinterpret_cast<ArtMethod*>(reinterpret_cast<uintptr_t>(methods) +
       ArtMethod::ObjectSize(pointer_size) * i);
   return &methods->At(i,
-                      ArtMethod::ObjectSize(pointer_size),
-                      ArtMethod::ObjectAlignment(pointer_size));
+                      ArtMethod::Size(pointer_size),
+                      ArtMethod::Alignment(pointer_size));
 }
 
 template<VerifyObjectFlags kVerifyFlags>
@@ -140,8 +140,8 @@ inline ArtMethod* Class::GetVirtualMethodUnchecked(size_t i, size_t pointer_size
   return reinterpret_cast<ArtMethod*>(reinterpret_cast<uintptr_t>(methods) +
       ArtMethod::ObjectSize(pointer_size) * i);
   return &methods->At(i,
-                      ArtMethod::ObjectSize(pointer_size),
-                      ArtMethod::ObjectAlignment(pointer_size));
+                      ArtMethod::Size(pointer_size),
+                      ArtMethod::Alignment(pointer_size));
 }
 
 inline PointerArray* Class::GetVTable() {
@@ -853,8 +853,8 @@ inline StrideIterator<ArtMethod> Class::DirectMethodsBegin(size_t pointer_size) 
   auto stride = ArtMethod::ObjectSize(pointer_size);
   return StrideIterator<ArtMethod>(reinterpret_cast<uintptr_t>(methods), stride);
   return MakeIterationRangeFromLengthPrefixedArray(GetDirectMethodsPtrUnchecked(),
-                                                   ArtMethod::ObjectSize(pointer_size),
-                                                   ArtMethod::ObjectAlignment(pointer_size));
+                                                   ArtMethod::Size(pointer_size),
+                                                   ArtMethod::Alignment(pointer_size));
 }
 
 inline StrideIterator<ArtMethod> Class::DirectMethodsEnd(size_t pointer_size) {
@@ -888,8 +888,8 @@ inline StrideIterator<ArtMethod> Class::VirtualMethodsEnd(size_t pointer_size) {
 inline IterationRange<StrideIterator<ArtMethod>> Class::GetVirtualMethods(size_t pointer_size) {
   return MakeIterationRange(VirtualMethodsBegin(pointer_size), VirtualMethodsEnd(pointer_size));
   return MakeIterationRangeFromLengthPrefixedArray(GetVirtualMethodsPtrUnchecked(),
-                                                   ArtMethod::ObjectSize(pointer_size),
-                                                   ArtMethod::ObjectAlignment(pointer_size));
+                                                   ArtMethod::Size(pointer_size),
+                                                   ArtMethod::Alignment(pointer_size));
 }
 
 inline IterationRange<StrideIterator<ArtField>> Class::GetIFields() {

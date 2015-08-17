@@ -332,6 +332,9 @@ bool FaultManager::IsInGeneratedCode(siginfo_t* siginfo, void* context, bool che
   VLOG(signals) << "potential method: " << method_obj;
   // TODO: Check linear alloc and image.
   if (method_obj == 0 || !IsAligned<kObjectAlignment>(method_obj)) {
+  DCHECK_ALIGNED(ArtMethod::Size(sizeof(void*)), sizeof(void*))
+      << "ArtMethod is not pointer aligned";
+  if (method_obj == nullptr || !IsAligned<sizeof(void*)>(method_obj)) {
     VLOG(signals) << "no method";
     return false;
   }

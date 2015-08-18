@@ -120,6 +120,63 @@ class InternalCodeAllocator : public CodeAllocator {
   DISALLOW_COPY_AND_ASSIGN(InternalCodeAllocator);
 };
 
+static bool CanExecuteOnHardware(InstructionSet target_isa) {
+  return (target_isa == kRuntimeISA)
+      // Handle the special case of ARM, with two instructions sets
+      // (ARM32 and Thumb-2).
+      || (kRuntimeISA == kArm && target_isa == kThumb2);
+}
+
+static bool CanExecute(InstructionSet target_isa) {
+  return CanExecuteOnHardware(target_isa) || CodeSimulator::CanSimulate(target_isa);
+}
+
+template <typename Expected>
+static Expected SimulatorExecute(CodeSimulator* simulator, Expected (*f)());
+
+template <>
+bool SimulatorExecute<bool>(CodeSimulator* simulator, bool (*f)()) {
+  simulator->RunFrom(reinterpret_cast<intptr_t>(f));
+  return simulator->GetCReturnBool();
+}
+
+template <>
+int32_t SimulatorExecute<int32_t>(CodeSimulator* simulator, int32_t (*f)()) {
+  simulator->RunFrom(reinterpret_cast<intptr_t>(f));
+  return simulator->GetCReturnInt32();
+}
+
+template <>
+int64_t SimulatorExecute<int64_t>(CodeSimulator* simulator, int64_t (*f)()) {
+  simulator->RunFrom(reinterpret_cast<intptr_t>(f));
+  return simulator->GetCReturnInt64();
+}
+
+template <typename Expected>
+static void VerifyGeneratedCode(InstructionSet target_isa,
+                                Expected (*f)(),
+                                bool has_result,
+                                Expected expected) {
+  ASSERT_TRUE(CanExecute(target_isa)) << "Target ISA is not executable " << target_isa;
+
+  // Verify on simulator.
+  if (CodeSimulator::CanSimulate(target_isa)) {
+    std::unique_ptr<CodeSimulator> simulator(CodeSimulator::CreateCodeSimulator(target_isa));
+    Expected result = SimulatorExecute<Expected>(simulator.get(), f);
+    if (has_result) {
+      ASSERT_EQ(expected, result);
+    }
+  }
+
+  // Verify on hardware.
+  if (CanExecuteOnHardware(target_isa)) {
+    Expected result = f();
+    if (has_result) {
+      ASSERT_EQ(expected, result);
+    }
+  }
+}
+
 template <typename Expected>
 static void Run(const InternalCodeAllocator& allocator,
                 const CodeGenerator& codegen,

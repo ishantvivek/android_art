@@ -651,6 +651,7 @@ class HBasicBlock : public ArenaObject<kArenaAllocMisc> {
   }
 
   size_t GetSuccessorIndexOf(HBasicBlock* successor) {
+  size_t GetSuccessorIndexOf(HBasicBlock* successor) const {
     for (size_t i = 0, e = successors_.Size(); i < e; ++i) {
       if (successors_.Get(i) == successor) {
         return i;

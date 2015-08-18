@@ -551,8 +551,34 @@ void SsaBuilder::VisitStoreLocal(HStoreLocal* store) {
 }
 
 void SsaBuilder::VisitInstruction(HInstruction* instruction) {
+
   if (!instruction->NeedsEnvironment()) {
     return;
+  if (instruction->NeedsEnvironment()) {
+    HEnvironment* environment = new (GetGraph()->GetArena()) HEnvironment(
+        GetGraph()->GetArena(),
+        current_locals_->Size(),
+        GetGraph()->GetDexFile(),
+        GetGraph()->GetMethodIdx(),
+        instruction->GetDexPc(),
+        GetGraph()->GetInvokeType(),
+        instruction);
+    environment->CopyFrom(*current_locals_);
+    instruction->SetRawEnvironment(environment);
+  }
+
+  // If in a try block, propagate values of locals into catch blocks.
+  if (instruction->GetBlock()->IsInTry() && instruction->CanThrow()) {
+    HTryBoundary* try_block = instruction->GetBlock()->GetTryEntry();
+    for (HExceptionHandlerIterator it(*try_block); !it.Done(); it.Advance()) {
+      GrowableArray<HInstruction*>* handler_locals = GetLocalsFor(it.Current());
+      for (size_t i = 0, e = current_locals_->Size(); i < e; ++i) {
+        HInstruction* local_value = current_locals_->Get(i);
+        if (local_value != nullptr) {
+          handler_locals->Get(i)->AsPhi()->AddInput(local_value);
+        }
+      }
+    }
   }
   HEnvironment* environment = new (GetGraph()->GetArena()) HEnvironment(
       GetGraph()->GetArena(),
